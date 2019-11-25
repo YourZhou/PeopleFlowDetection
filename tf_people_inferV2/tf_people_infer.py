@@ -1,3 +1,13 @@
+# -*- coding: utf-8 -*-
+"""
+    @Author  : YourZhou
+    @Time    : 2019/7/5
+    @Comment :
+"""
+
+"""
+导入必要库文件
+"""
 import cv2 as cv
 import pymysql
 import datetime
@@ -10,6 +20,12 @@ import functools
 from queue import Queue
 from utility import add_arguments, print_arguments
 
+"""
+获得命令行参数
+graphic_display：是否打开图形界面
+use_video：是否使用视频检测（否则调用摄像头）
+video_path：当使用视频时，视频地址
+"""
 parser = argparse.ArgumentParser(description=__doc__)
 add_arg = functools.partial(add_arguments, argparser=parser)
 # yapf: disable
@@ -22,6 +38,18 @@ add_arg('video_path', str, './all_test01.mp4', "The video used to inference and 
 
 # 连接智慧景区数据库及相关操作
 class Scenic_mysql_conn:
+    """
+    数据传输操作
+    ip：47.102.153.115/3306
+    user='root',
+    passwd='1234',
+    db='scenic_area',
+    charset='utf8
+
+    place_name：地点名称
+    people_num：人数
+    sql_id：数据库id
+    """
     place_name = "tower"
     people_num = 0
     id = 1
@@ -38,6 +66,10 @@ class Scenic_mysql_conn:
         return connection
 
     def set_place_name(self, place_num):
+        """
+        :param place_num: 输入地点id，初始化数据库配置信息
+        :return:
+        """
         Scenic_mysql_conn.place_num = place_num
         if Scenic_mysql_conn.place_num == '1':
             Scenic_mysql_conn.sql_id = "tbl_tower"
@@ -77,11 +109,20 @@ class Scenic_mysql_conn:
         return Scenic_mysql_conn.place_num
 
     def conn_to_sql(self, place_num):
+        """
+        连接数据库操作
+        :param place_num:传入要连接的数据库
+        :return:
+        """
         Scenic_mysql_conn.set_place_name(self, place_num)
         self.conn = Scenic_mysql_conn.getConnecttion(self)
         self.cursor = self.conn.cursor()
 
     def setting_to_sql(self):
+        """
+        上传实时人数数量
+        :return:
+        """
         dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.cursor.execute("insert into %s(last_date,people,place_name) value('%s','%d','%s')" %
                             (Scenic_mysql_conn.get_sql_id(self), dt,
@@ -90,9 +131,18 @@ class Scenic_mysql_conn:
         self.conn.commit()
 
     def close_to_sql(self):
+        """
+        关闭数据库连接
+        :return:
+        """
         self.conn.close()
         self.cursor.close()
+
     def update_to_sql(self):
+        """
+        更新数据库人数信息
+        :return:
+        """
         dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.cursor.execute("update tbl_place set last_people='%d' where place_id=%s" %
                             (Scenic_mysql_conn.get_people_num(self),
@@ -102,6 +152,10 @@ class Scenic_mysql_conn:
         self.conn.commit()
 
     def select_to_people_threshold(self):
+        """
+        查看数据库得到云端设置的人数阈值
+        :return:人数阈值
+        """
         sql = "select config_value from tbl_config where config_name='阈值'"
         self.cursor.execute(sql)
         rs = self.cursor.fetchone()
@@ -112,12 +166,26 @@ class Scenic_mysql_conn:
 
 # 录制警报视频以及视频的上传
 def save_and_send_video(mp_q, place_names, people_nums, graphic_display):
+    """
+    当出现人数预警，进行预警视频录制
+    并上传服务器
+    :param mp_q: 传入多进程的管道
+    :param place_names: 地点信息
+    :param people_nums: 人数信息
+    :param graphic_display: 是否打开图形界面
+    :return:
+    """
+    # 得到当前时间
     newtime = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     print("-------waiting------\n"
           "   预警视频录制中\n"
           "--------------------\n")
+
+    # 创建线程进行计时
     video_time = td.Thread(target=recording_time, daemon=True)
+    # 计时开始（线程开启）
     video_time.start()
+
     video_name = "./warn_video/" + newtime + ".mp4"
     fourcc = cv.VideoWriter_fourcc(*"AVC1")
     out = cv.VideoWriter(video_name, fourcc, 10.0, (720, 420))
@@ -188,8 +256,12 @@ def sql_wait_time(q, td_threshold, place_num):
             people_threshold = lot_buf
             td_threshold.put(people_threshold)
 
-
+# 视频录制定时
 def recording_time():
+    """
+    定时5秒钟做视频录制
+    :return:
+    """
     time.sleep(5)
 
 

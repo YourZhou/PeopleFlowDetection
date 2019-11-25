@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
     @Author  : YourZhou
-    @Time    : 2019/7/5
+    @Time    : 2019/11/25
     @Comment :
 """
 
@@ -10,6 +10,7 @@
 """
 import cv2 as cv
 import pymysql
+import os
 import datetime
 import time
 import threading as td
@@ -175,73 +176,122 @@ def save_and_send_video(mp_q, place_names, people_nums, graphic_display):
     :param graphic_display: 是否打开图形界面
     :return:
     """
+    # 服务器接收预警视频接口
+    upload_url = 'http://47.102.153.115:8080/isa/warn'
+    # 视频时间
+    Video_time = 5
+
     # 得到当前时间
     newtime = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     print("-------waiting------\n"
           "   预警视频录制中\n"
           "--------------------\n")
 
-    # 创建线程进行计时
-    video_time = td.Thread(target=recording_time, daemon=True)
-    # 计时开始（线程开启）
-    video_time.start()
+    # # 创建线程进行计时
+    # video_time = td.Thread(target=recording_time, daemon=True)
+    # # 计时开始（线程开启）
+    # video_time.start()
 
-    video_name = "./warn_video/" + newtime + ".mp4"
+    # 初始化录制信息（文件夹建立）
+    video_path = "./warn_video/"
+    if not os.path.exists(video_path):
+        os.mkdir(video_path)
+    video_name = video_path + newtime + ".mp4"
+
+    # 文件编码
     fourcc = cv.VideoWriter_fourcc(*"AVC1")
+    # 以720x420录制（每秒10帧）
     out = cv.VideoWriter(video_name, fourcc, 10.0, (720, 420))
-    while video_time.isAlive() == True:
+
+    # 获得录制开始时间
+    Recording_time = 0
+    t_start = time.time()
+    # 开始录制
+    while Recording_time <= Video_time:
+        # 读取视频播放管道数据
         if mp_q.empty() == False:
-            people_num_v = 0
             image = mp_q.get()
             image = cv.flip(image, 1)
             # gray = cv.cvtColor(image,cv.COLOR_BGR2GRAY)
             new_img = cv.resize(image, (720, 420))
             out.write(new_img)
+            # 如打开图形化界面则显示
             if graphic_display == True:
                 cv.imshow("video", new_img)
                 cv.waitKey(10)
+            Recording_time = time.time() - t_start
+    # 关闭录制
     out.release()
     if graphic_display == True:
         cv.destroyAllWindows()
+
     print("-------waiting------\n"
           "   预警视频发送中..\n"
           "--------------------\n")
-    upload_url = 'http://47.102.153.115:8080/isa/warn'
+
+    # 文件发送
     files = {'file': open(video_name, 'rb')}
     upload_data = {"warn_place": place_names, "people": people_nums, "fileName": video_name, "uoType": 1}
     upload_res = requests.post(upload_url, data=upload_data, files=files)
     # print(upload_res.text)
+
     print("----------------------------\n"
           "     预警视频发送成功！！\n"
           "----------------------------\n")
 
 
 def image_put(q, args):
+    """
+    加载视频流文件
+    :param q: 多进程读取视频的管道
+    :param args: 传入初始化参数（是否使用视频）
+    :return:
+    """
+    # 判断是否使用视频
     if args.use_video == False:
         cap = cv.VideoCapture(0)
     else:
         cap = cv.VideoCapture(args.video_path)
 
+    # 输出查看
     if cap.isOpened():
         print('\nvideo ok')
     else:
         print('\nvideo error')
+
+    # 后台进程读取视频
     while True:
         q.put(cap.read()[1])
+        # 不断刷新缓冲区
         q.get() if q.qsize() > 1 else time.sleep(0.01)
 
 
 def sql_wait_time(q, td_threshold, place_num):
+    """
+    读取数据库阈值信息
+    并每隔3秒上传云服务器
+    本函数为线程函数
+    :param q:加载人数信息的管道
+    :param td_threshold:阈值信息存放的管道
+    :param place_num:地点位置信息
+    :return:
+    """
+    # 存放人数的缓冲区
     num_buff = 0
+
     #### MySQL连接 #####
     msql_conn = Scenic_mysql_conn()
     msql_conn.conn_to_sql(place_num)
-    # 获取当前阈值信息,并存入queue
+
+    # 获取当前初始阈值信息,并存入管道
     people_threshold = msql_conn.select_to_people_threshold()
     td_threshold.put(people_threshold)
+
+    # 每3秒上报一次人数入数据库
     while True:
         time.sleep(3)
         num_buff = q.get()
+        # 当收到num_buff=1000的信号关闭连接
         if num_buff == 1000:
             msql_conn.close_to_sql()
             break
@@ -256,7 +306,8 @@ def sql_wait_time(q, td_threshold, place_num):
             people_threshold = lot_buf
             td_threshold.put(people_threshold)
 
-# 视频录制定时
+
+# 视频录制定时（延时5s）
 def recording_time():
     """
     定时5秒钟做视频录制
@@ -266,11 +317,24 @@ def recording_time():
 
 
 def td_mp_set(args, place_num):
+    """
+    进程、线程管理
+    :param args: 参数
+    :param place_num:地点位置
+    :return: 三个管道
+    """
+    # 线程管道x2
     td_queue = Queue()
-    mp_queue = mp.Queue()
     td_threshold = Queue()
+
+    # 进程管道x1
+    mp_queue = mp.Queue()
+
+    # 数据库传输线程
     wait_send = td.Thread(target=sql_wait_time, args=(td_queue, td_threshold, place_num), daemon=True)
+    # 视频读取进程
     video_input = mp.Process(target=image_put, args=(mp_queue, args), daemon=True)
+    # 启动
     video_input.start()
     wait_send.start()
     return td_queue, mp_queue, td_threshold
@@ -360,7 +424,10 @@ def main(td_q, mp_q, td_threshold, place_num, args):
 
             # 打印当前人数
             newtime = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-            print(place_name + "\tpeople:" + str(people_num) + "\t" + newtime)
+            PrintStr = place_name + "\tpeople:" + str(people_num) + "\t" + newtime
+            # 使用一行输出结果并刷新
+            print('\r', "{}".format(PrintStr), end='')
+
             # 进行时间标记
             if td_q.empty() == True:
                 lot_time += 1

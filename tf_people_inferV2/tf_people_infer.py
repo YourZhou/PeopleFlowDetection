@@ -240,6 +240,7 @@ def save_and_send_video(mp_q, place_names, people_nums, graphic_display):
           "----------------------------\n")
 
 
+# 视频后台播放
 def image_put(q, args):
     """
     加载视频流文件
@@ -266,6 +267,7 @@ def image_put(q, args):
         q.get() if q.qsize() > 1 else time.sleep(0.01)
 
 
+# 数据上传数据库
 def sql_wait_time(q, td_threshold, place_num):
     """
     读取数据库阈值信息
@@ -316,6 +318,7 @@ def recording_time():
     time.sleep(5)
 
 
+# 多进程设置
 def td_mp_set(args, place_num):
     """
     进程、线程管理
@@ -340,7 +343,17 @@ def td_mp_set(args, place_num):
     return td_queue, mp_queue, td_threshold
 
 
-def main(td_q, mp_q, td_threshold, place_num, args):
+# 总部
+def headquarters(td_q, mp_q, td_threshold, place_num, args):
+    """
+    主要执行程序
+    :param td_q: TQ1
+    :param mp_q: MQ1
+    :param td_threshold: TQ2
+    :param place_num: 地点位置
+    :param args: 参数传入
+    :return:
+    """
     # 获取当前时间，实现FPS的显示
     t_start = time.time()
     fps = 0
@@ -418,6 +431,11 @@ def main(td_q, mp_q, td_threshold, place_num, args):
             # 将人数进行增强
             # people_num*=3
 
+            # 计算出当前FPS值，并显示
+            fps = fps + 1
+            sfps = fps / (time.time() - t_start)
+            cv.putText(image, "FPS : " + str(int(sfps)), (50, 50), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
             if people_num >= people_threshold:
                 cv.putText(image, "warn!!!!", (0, 200), cv.FONT_HERSHEY_SIMPLEX, 5,
                            (0, 0, 255), 4)
@@ -442,11 +460,6 @@ def main(td_q, mp_q, td_threshold, place_num, args):
                 Video_Pattern = 2
                 first_video = False
 
-            # 计算出当前FPS值，并显示
-            fps = fps + 1
-            sfps = fps / (time.time() - t_start)
-            cv.putText(image, "FPS : " + str(int(sfps)), (50, 50), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-
             if graphic_display == True:
                 # 将视频进行输出
                 # 将视频尺寸进行修剪
@@ -469,25 +482,31 @@ def main(td_q, mp_q, td_threshold, place_num, args):
             break
 
 
-if __name__ == '__main__':
+def main():
     args = parser.parse_args()
     print_arguments(args)
 
-    place_name = "null"
-    sql_id = '0'
+    # place_name = "null"
+    # sql_id = '0'
+
     print("1:普贤塔  2：象山岩  3：桂林抗战遗址")
     place_num = input("请输入地点标号：")
-    if place_num == '1':
-        sql_id = "tbl_tower"
-        place_name = "tower"
-    elif place_num == '2':
-        sql_id = "tbl_rock"
-        place_name = "rock"
-    elif place_num == '3':
-        sql_id = "tbl_ruins"
-        place_name = "ruins"
-    else:
-        print("Worry")
+
+    # if place_num == '1':
+    #     sql_id = "tbl_tower"
+    #     place_name = "tower"
+    # elif place_num == '2':
+    #     sql_id = "tbl_rock"
+    #     place_name = "rock"
+    # elif place_num == '3':
+    #     sql_id = "tbl_ruins"
+    #     place_name = "ruins"
+    # else:
+    #     print("Worry")
 
     td_q, mp_q, td_threshold = td_mp_set(args, place_num)
-    main(td_q, mp_q, td_threshold, place_num, args)
+    headquarters(td_q, mp_q, td_threshold, place_num, args)
+
+
+if __name__ == '__main__':
+    main()

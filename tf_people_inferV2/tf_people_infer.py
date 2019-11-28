@@ -8,19 +8,14 @@
 """
 导入必要库文件
 """
-import cv2 as cv
-import tensorflow as tf
-import pymysql
-import os
-import datetime
-import time
-import numpy as np
 import threading as td
 import multiprocessing as mp
-from networks import multi_column_cnn
 import requests
 import argparse
 import functools
+from SSDdetection import *
+from MCNNdensity import *
+from MySQLconn import *
 from queue import Queue
 from utility import add_arguments, print_arguments
 
@@ -37,230 +32,11 @@ add_arg = functools.partial(add_arguments, argparser=parser)
 add_arg('graphic_display', bool, True, "Whether use display.")
 add_arg('use_video', bool, True, "Whether use video.")
 add_arg('video_path', str, './all_test01.mp4', "The video used to inference and visualize.")
+add_arg('monitoring_place', str, '1', "1:普贤塔  2：象山岩  3：桂林抗战遗址")
+add_arg('people_threshold', int, 30, "Set the threshold number of people to alert.")
 
 
 # yapf: enable
-
-# 连接智慧景区数据库及相关操作
-class Scenic_mysql_conn:
-    """
-    数据传输操作
-    ip：47.102.153.115/3306
-    user='root',
-    passwd='1234',
-    db='scenic_area',
-    charset='utf8
-
-    place_name：地点名称
-    people_num：人数
-    sql_id：数据库id
-    """
-
-    def __init__(self):
-        self.place_name = "tower"
-        self.people_num = 0
-        self.id = 1
-        self.place_num = 1
-        self.sql_id = "tbl_tower"
-
-    def getConnecttion(self):
-        connection = pymysql.Connect(host='47.102.153.115',
-                                     port=3306,
-                                     user='root',
-                                     passwd='1234',
-                                     db='scenic_area',
-                                     charset='utf8')
-        return connection
-
-    def set_place_name(self, place_num):
-        """
-        :param place_num: 输入地点id，初始化数据库配置信息
-        :return:
-        """
-        Scenic_mysql_conn.place_num = place_num
-        if Scenic_mysql_conn.place_num == '1':
-            Scenic_mysql_conn.sql_id = "tbl_tower"
-            Scenic_mysql_conn.place_name = "tower"
-        elif Scenic_mysql_conn.place_num == '2':
-            Scenic_mysql_conn.sql_id = "tbl_rock"
-            Scenic_mysql_conn.place_name = "rock"
-        elif Scenic_mysql_conn.place_num == '3':
-            Scenic_mysql_conn.sql_id = "tbl_ruins"
-            Scenic_mysql_conn.place_name = "ruins"
-        else:
-            print("Worry")
-        print(Scenic_mysql_conn.place_num + '\t' + Scenic_mysql_conn.place_name + '\t' + Scenic_mysql_conn.sql_id)
-
-    def set_people_num(self, num):
-        Scenic_mysql_conn.people_num = num
-
-    def get_place_name(self):
-        return Scenic_mysql_conn.place_name
-
-    def get_people_num(self):
-        return Scenic_mysql_conn.people_num
-
-    def get_sql_id(self):
-        return Scenic_mysql_conn.sql_id
-
-    def set_id(self, id):
-        Scenic_mysql_conn.id = id
-
-    def add_id(self):
-        Scenic_mysql_conn.id += 1
-
-    def get_id(self):
-        return Scenic_mysql_conn.id
-
-    def get_place_num(self):
-        return Scenic_mysql_conn.place_num
-
-    def conn_to_sql(self, place_num):
-        """
-        连接数据库操作
-        :param place_num:传入要连接的数据库
-        :return:
-        """
-        Scenic_mysql_conn.set_place_name(self, place_num)
-        self.conn = Scenic_mysql_conn.getConnecttion(self)
-        self.cursor = self.conn.cursor()
-
-    def setting_to_sql(self):
-        """
-        上传实时人数数量
-        :return:
-        """
-        dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.cursor.execute("insert into %s(last_date,people,place_name) value('%s','%d','%s')" %
-                            (Scenic_mysql_conn.get_sql_id(self), dt,
-                             Scenic_mysql_conn.get_people_num(self),
-                             Scenic_mysql_conn.get_place_name(self)))
-        self.conn.commit()
-
-    def close_to_sql(self):
-        """
-        关闭数据库连接
-        :return:
-        """
-        self.conn.close()
-        self.cursor.close()
-
-    def update_to_sql(self):
-        """
-        更新数据库人数信息
-        :return:
-        """
-        dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.cursor.execute("update tbl_place set last_people='%d' where place_id=%s" %
-                            (Scenic_mysql_conn.get_people_num(self),
-                             Scenic_mysql_conn.get_place_num(self)))
-        self.cursor.execute("update tbl_place set last_date='%s' where place_id=%s" %
-                            (dt, Scenic_mysql_conn.get_place_num(self)))
-        self.conn.commit()
-
-    def select_to_people_threshold(self):
-        """
-        查看数据库得到云端设置的人数阈值
-        :return:人数阈值
-        """
-        sql = "select config_value from tbl_config where config_name='阈值'"
-        self.cursor.execute(sql)
-        rs = self.cursor.fetchone()
-        for row in rs:
-            row = int(row)
-        return row
-
-
-class People_Flow_Density:
-    def __init__(self):
-        self.set_gpu(1)
-
-        self.img_path = 'D:\\YourZhouProject\\mcnn_project\\pytorch_mcnn\\part_A_final\\test_data\\images\\IMG_67.jpg'
-        self.model_path = 'D:\\YourZhouProject\\mcnn_project\\tf_mcnn\\MCNN_REPRODUCTION-master\\ckpts2\\mcnn\\v1-1425'
-        # crop_size = 256
-
-    def set_gpu(self, gpu=0):
-        """
-        the gpu used setting
-        :param gpu: gpu id
-        :return:
-        """
-        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
-
-    # 密度图生成
-    def image_processing(self, input):
-        # 高斯模糊
-        kernel_size = (3, 3)
-        sigma = 15
-        r_img = cv.GaussianBlur(input, kernel_size, sigma)
-
-        # 灰度图标准化
-        norm_img = np.zeros(r_img.shape)
-        norm_img = cv.normalize(r_img, norm_img, 0, 255, cv.NORM_MINMAX)
-        norm_img = np.asarray(norm_img, dtype=np.uint8)
-        # r_img = cv.resize(r_img, (720, 420))
-        # utils.show_density_map(r_img)
-
-        # 灰度图颜色反转
-        imgInfo = norm_img.shape
-        heigh = imgInfo[0]
-        width = imgInfo[1]
-        dst = np.zeros((heigh, width, 1), np.uint8)
-        for i in range(0, heigh):
-            for j in range(0, width):
-                grayPixel = norm_img[i, j]
-                dst[i, j] = 255 - grayPixel
-
-        # 生成热力图
-        heat_img = cv.applyColorMap(dst, cv.COLORMAP_JET)  # 注意此处的三通道热力图是cv2专有的GBR排列
-        output = cv.cvtColor(heat_img, cv.COLOR_BGR2RGB)  # 将BGR图像转为RGB图像
-
-        return output
-
-    # 密度图与原图叠加
-    def image_add_heatmap(self, frame, heatmap, alpha=0.5):
-        img_size = frame.shape
-        heatmap = cv.resize(heatmap, (img_size[1], img_size[0]))
-        overlay = frame.copy()
-        cv.rectangle(overlay, (0, 0), (frame.shape[1], frame.shape[0]), (255, 0, 0), -1)  # 设置蓝色为热度图基本色
-        cv.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)  # 将背景热度图覆盖到原图
-        cv.addWeighted(heatmap, alpha, frame, 1 - alpha, 0, frame)  # 将热度图覆盖到原图
-        return frame
-
-    def density_infer(self, input_img):
-        ori_crowd_img = cv.imread(self.img_path)
-        # h, w = ori_crowd_img.shape[0], ori_crowd_img.shape[1]
-        img = ori_crowd_img.reshape((ori_crowd_img.shape[0], ori_crowd_img.shape[1], ori_crowd_img.shape[2]))
-
-        # place holder位置保持器
-        input_img_placeholder = tf.placeholder(tf.float32, shape=([None, None, None, 3]))
-        density_map_placeholder = tf.placeholder(tf.float32, shape=(None, None, None, 1))
-
-        inference_density_map = multi_column_cnn(input_img_placeholder)
-
-        saver = tf.train.Saver()
-
-        time_star = time.time()
-        with tf.Session() as sess:
-            saver.restore(sess, self.model_path)
-            result = sess.run(inference_density_map, feed_dict={input_img_placeholder: [(img - 127.5) / 128]})
-
-        time_over = time.time() - time_star
-        print(time_over)
-
-        num = result.sum()
-        print(num)
-        dmap_img = result[0, :, :, 0]
-
-        final_img = self.image_processing(dmap_img)
-        final_img = self.image_add_heatmap(ori_crowd_img, final_img, 0.5)
-
-        cv.putText(final_img, "P : " + str(int(num)), (50, 50), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-        cv.imshow("really", final_img)
-
-        cv.waitKey(0)
-        cv.destroyAllWindows()
 
 
 # 录制警报视频以及视频的上传
@@ -366,7 +142,7 @@ def image_put(q, args):
 
 
 # 数据上传数据库
-def sql_wait_time(q, td_threshold, place_num):
+def sql_wait_time(q, td_threshold, args):
     """
     读取数据库阈值信息
     并每隔3秒上传云服务器
@@ -381,11 +157,11 @@ def sql_wait_time(q, td_threshold, place_num):
 
     #### MySQL连接 #####
     msql_conn = Scenic_mysql_conn()
-    msql_conn.conn_to_sql(place_num)
+    msql_conn.conn_to_sql(args.monitoring_place)
 
     # 获取当前初始阈值信息,并存入管道
-    people_threshold = msql_conn.select_to_people_threshold()
-    td_threshold.put(people_threshold)
+    args.people_threshold = msql_conn.select_to_people_threshold()
+    td_threshold.put(args.people_threshold)
 
     # 每3秒上报一次人数入数据库
     while True:
@@ -402,7 +178,7 @@ def sql_wait_time(q, td_threshold, place_num):
         msql_conn.update_to_sql()
         # 查询阈值是否变化
         lot_buf = int(msql_conn.select_to_people_threshold())
-        if people_threshold != lot_buf:
+        if args.people_threshold != lot_buf:
             people_threshold = lot_buf
             td_threshold.put(people_threshold)
 
@@ -417,7 +193,7 @@ def recording_time():
 
 
 # 多进程设置
-def td_mp_set(args, place_num):
+def td_mp_set(args):
     """
     进程、线程管理
     :param args: 参数
@@ -432,7 +208,7 @@ def td_mp_set(args, place_num):
     mp_queue = mp.Queue()
 
     # 数据库传输线程
-    wait_send = td.Thread(target=sql_wait_time, args=(td_queue, td_threshold, place_num), daemon=True)
+    wait_send = td.Thread(target=sql_wait_time, args=(td_queue, td_threshold, args), daemon=True)
     # 视频读取进程
     video_input = mp.Process(target=image_put, args=(mp_queue, args), daemon=True)
     # 启动
@@ -442,19 +218,16 @@ def td_mp_set(args, place_num):
 
 
 # 总部
-def headquarters(td_q, mp_q, td_threshold, place_num, args):
+def headquarters(td_q, mp_q, td_threshold, args):
     """
     主要执行程序
     :param td_q: TQ1
     :param mp_q: MQ1
     :param td_threshold: TQ2
-    :param place_num: 地点位置
     :param args: 参数传入
     :return:
     """
-    # 获取当前时间，实现FPS的显示
-    t_start = time.time()
-    fps = 0
+    place_num = args.monitoring_place
     if place_num == '1':
         place_name = "tower"
     elif place_num == '2':
@@ -463,17 +236,16 @@ def headquarters(td_q, mp_q, td_threshold, place_num, args):
         place_name = "ruins"
     else:
         place_name = "rock"
-    # 导入及读取tf模型
-    inference_pb = "./frozen_inference_graph.pb"
-    graph_txt = "./graph.pbtxt"
-    net = cv.dnn.readNetFromTensorflow(inference_pb, graph_txt)
+
+    mPeopleDetection = People_detection()
+
     # 从queue获取当前阈值信息
     while True:
         if td_threshold.empty() == False:
-            people_threshold = td_threshold.get()
+            args.people_threshold = td_threshold.get()
             print("*****************************\n"
                   "people_threshold=%s"
-                  "\n*****************************" % people_threshold)
+                  "\n*****************************" % args.people_threshold)
             break
     # 当前视频模式，1：正常检测模式；2：视频录制发送模式
     Video_Pattern = 1
@@ -494,55 +266,14 @@ def headquarters(td_q, mp_q, td_threshold, place_num, args):
         while Video_Pattern == 1:
             # 是否到达人数上报时间
             if td_threshold.empty() == False:
-                people_threshold = td_threshold.get()
+                args.people_threshold = td_threshold.get()
                 print("*****************************\n"
                       "people_threshold change to %d"
-                      "\n*****************************" % people_threshold)
-            # 人数初始化
-            people_num = 0
+                      "\n*****************************" % args.people_threshold)
+
             # 从进程中获取最新帧
             image = mp_q.get()
-            image = cv.flip(image, 1)
-            # 获取视频宽高
-            h, w = image.shape[:2]
-            # 将图片导入模型进行处理
-            im_tensor = cv.dnn.blobFromImage(image, size=(300, 300), swapRB=True, crop=False)
-            net.setInput(im_tensor)
-            # 得到输出层数据
-            cvOut = net.forward()
-            # print(cvOut.shape)
-            # 得到各个候选框并画出
-            for detect in cvOut[0, 0, :, :]:
-                score = detect[2]
-                if score > 0.5:
-                    if graphic_display == True:
-                        left = detect[3] * w
-                        top = detect[4] * h
-                        right = detect[5] * w
-                        bottom = detect[6] * h
-                        cv.rectangle(image, (int(left), int(top)), (int(right), int(bottom)), (0, 0, 255), 2)
-                        goal = "{:.2f}%".format(score * 100)
-                        cv.putText(image, goal, (int(left), int(bottom)), cv.FONT_HERSHEY_SIMPLEX, 1,
-                                   (23, 230, 210), 2)
-                    people_num += 1
-
-            # 将人数进行增强
-            # people_num*=3
-
-            # 计算出当前FPS值，并显示
-            fps = fps + 1
-            sfps = fps / (time.time() - t_start)
-            cv.putText(image, "FPS : " + str(int(sfps)), (50, 50), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-
-            if people_num >= people_threshold:
-                cv.putText(image, "warn!!!!", (0, 200), cv.FONT_HERSHEY_SIMPLEX, 5,
-                           (0, 0, 255), 4)
-
-            # 打印当前人数
-            newtime = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-            PrintStr = place_name + "\tpeople:" + str(people_num) + "\t" + newtime
-            # 使用一行输出结果并刷新
-            print('\r', "{}".format(PrintStr), end='')
+            people_num, image = mPeopleDetection.detection(image, args)
 
             # 进行时间标记
             if td_q.empty() == True:
@@ -553,7 +284,7 @@ def headquarters(td_q, mp_q, td_threshold, place_num, args):
                 td_q.get()
 
             # 进行预警人数上报的判定
-            if ((first_video == True or lot_time > 10) and people_num >= people_threshold):
+            if ((first_video == True or lot_time > 10) and people_num >= args.people_threshold):
                 lot_time = 0
                 Video_Pattern = 2
                 first_video = False
@@ -589,6 +320,8 @@ def main():
 
     print("1:普贤塔  2：象山岩  3：桂林抗战遗址")
     place_num = input("请输入地点标号：")
+    args.monitoring_place = place_num
+    # print_arguments(args)
 
     # if place_num == '1':
     #     sql_id = "tbl_tower"
@@ -602,8 +335,8 @@ def main():
     # else:
     #     print("Worry")
 
-    td_q, mp_q, td_threshold = td_mp_set(args, place_num)
-    headquarters(td_q, mp_q, td_threshold, place_num, args)
+    td_q, mp_q, td_threshold = td_mp_set(args)
+    headquarters(td_q, mp_q, td_threshold, args)
 
 
 if __name__ == '__main__':

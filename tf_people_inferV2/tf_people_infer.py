@@ -31,8 +31,8 @@ add_arg = functools.partial(add_arguments, argparser=parser)
 # yapf: disable
 add_arg('graphic_display', bool, True, "Whether use display.")
 add_arg('use_video', bool, True, "Whether use video.")
-add_arg('video_path', str, './all_test01.mp4', "The video used to inference and visualize.")
-add_arg('monitoring_place', str, '1', "1:普贤塔  2：象山岩  3：桂林抗战遗址")
+add_arg('video_path', str, './test_video/all_test01.mp4', "The video used to inference and visualize.")
+add_arg('monitoring_place', str, '1', "1:普贤塔(tower)  2：象山岩(rock)  3：桂林抗战遗址(ruins)")
 add_arg('people_threshold', int, 30, "Set the threshold number of people to alert.")
 
 

@@ -7,8 +7,8 @@ import time
 class People_detection:
     def __init__(self):
         # 导入及读取tf模型
-        self.inference_pb = "./frozen_inference_graph.pb"
-        self.graph_txt = "./graph.pbtxt"
+        self.inference_pb = "./model/SSD_model/frozen_inference_graph.pb"
+        self.graph_txt = "./model/SSD_model/graph.pbtxt"
         self.net = cv.dnn.readNetFromTensorflow(self.inference_pb, self.graph_txt)
 
     def detection(self, image, args):

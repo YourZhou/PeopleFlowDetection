@@ -237,7 +237,7 @@ def headquarters(td_q, mp_q, td_threshold, args):
     else:
         place_name = "rock"
 
-    mPeopleDetection = People_detection()
+   # mPeopleDetection = People_detection()
     mPeopleDensity = People_Flow_Density()
 
     # 从queue获取当前阈值信息

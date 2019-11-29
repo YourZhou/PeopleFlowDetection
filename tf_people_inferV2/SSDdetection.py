@@ -61,6 +61,7 @@ class People_detection:
         fps = fps + 1
         sfps = fps / (time.time() - t_start)
         cv.putText(image, "FPS : " + str(int(sfps)), (50, 50), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        cv.putText(image, "P : " + str(people_num), (100, 50), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
         if people_num >= args.people_threshold:
             cv.putText(image, "warn!!!!", (0, 200), cv.FONT_HERSHEY_SIMPLEX, 5,

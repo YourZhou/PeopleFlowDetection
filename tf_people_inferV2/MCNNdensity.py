@@ -3,6 +3,7 @@ import tensorflow as tf
 import os
 import time
 import numpy as np
+import datetime
 from networks import multi_column_cnn
 
 
@@ -11,9 +12,15 @@ class People_Flow_Density:
     def __init__(self):
         self.set_gpu(1)
 
-        self.img_path = 'D:\\YourZhouProject\\mcnn_project\\pytorch_mcnn\\part_A_final\\test_data\\images\\IMG_67.jpg'
-        self.model_path = 'D:\\YourZhouProject\\mcnn_project\\tf_mcnn\\MCNN_REPRODUCTION-master\\ckpts2\\mcnn\\v1-1425'
+        self.img_path = ''
+        self.model_path = './model/MCNN_model/v1-2050'
         # crop_size = 256
+
+        # place holder位置保持器(定义变量)
+        self.input_img_placeholder = tf.placeholder(tf.float32, shape=([None, None, None, 3]))
+        self.density_map_placeholder = tf.placeholder(tf.float32, shape=(None, None, None, 1))
+
+        self.inference_density_map = multi_column_cnn(self.input_img_placeholder)
 
     def set_gpu(self, gpu=0):
         """
@@ -64,29 +71,34 @@ class People_Flow_Density:
         cv.addWeighted(heatmap, alpha, frame, 1 - alpha, 0, frame)  # 将热度图覆盖到原图
         return frame
 
-    def density_infer(self, input_img):
-        ori_crowd_img = cv.imread(self.img_path)
+    def density_infer(self, input_img, args):
+        place_num = args.monitoring_place
+        if place_num == '1':
+            place_name = "tower"
+        elif place_num == '2':
+            place_name = "rock"
+        elif place_num == '3':
+            place_name = "ruins"
+        else:
+            place_name = "rock"
+        # 获取当前时间，实现FPS的显示
+        t_start = time.time()
+        fps = 0
+
+        # 人数初始化
+        people_num = 0
+
+        ori_crowd_img = input_img
         # h, w = ori_crowd_img.shape[0], ori_crowd_img.shape[1]
         img = ori_crowd_img.reshape((ori_crowd_img.shape[0], ori_crowd_img.shape[1], ori_crowd_img.shape[2]))
 
-        # place holder位置保持器
-        input_img_placeholder = tf.placeholder(tf.float32, shape=([None, None, None, 3]))
-        density_map_placeholder = tf.placeholder(tf.float32, shape=(None, None, None, 1))
-
-        inference_density_map = multi_column_cnn(input_img_placeholder)
-
         saver = tf.train.Saver()
 
-        time_star = time.time()
         with tf.Session() as sess:
             saver.restore(sess, self.model_path)
-            result = sess.run(inference_density_map, feed_dict={input_img_placeholder: [(img - 127.5) / 128]})
-
-        time_over = time.time() - time_star
-        print(time_over)
+            result = sess.run(self.inference_density_map, feed_dict={self.input_img_placeholder: [(img - 127.5) / 128]})
 
         people_num = int(result.sum())
-        print(people_num)
         dmap_img = result[0, :, :, 0]
 
         final_img = self.image_processing(dmap_img)
@@ -94,7 +106,21 @@ class People_Flow_Density:
 
         cv.putText(final_img, "P : " + str(people_num), (50, 50), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
+        # 计算出当前FPS值，并显示
+        fps = fps + 1
+        sfps = fps / (time.time() - t_start)
+        cv.putText(final_img, "FPS : " + str(int(sfps)), (200, 50), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+        if people_num >= args.people_threshold:
+            cv.putText(final_img, "warn!!!!", (0, 200), cv.FONT_HERSHEY_SIMPLEX, 5,
+                       (0, 0, 255), 4)
+
+        # 打印当前人数
+        newtime = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        PrintStr = place_name + "\tpeople:" + str(people_num) + "\t" + newtime
+        # 使用一行输出结果并刷新
+        print('\r', "{}".format(PrintStr), end='')
         # cv.imshow("really", final_img)
         # cv.waitKey(0)
         # cv.destroyAllWindows()
-        return final_img, people_num
+        return people_num, final_img
